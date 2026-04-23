@@ -8,7 +8,7 @@ Este script toma la base con binarias (salida de 03) y:
     (3) Excluye variables redundantes o colineales con y
     (4) Convierte TIPO CUERPO DE AGUA a dummy (LÓTICO = 1, LÉNTICO = 0).
     (5) Elimina filas con > UMBRAL_FILA de faltantes sobre las candidatas
-    (6) Aplica MICE (Multiple Imputation by Chained Equations) para
+    (6) Aplica MICE con randomforest (Multiple Imputation by Chained Equations) para
         imputar los NaN restantes
     (7) Redondea las variables binarias imputadas a {0, 1}.
 
@@ -20,11 +20,9 @@ las relaciones entre las regresoras.
 import numpy as np
 import pandas as pd
 
-# IterativeImputer está aún en "experimental" en sklearn;
-# hay que importarlo de forma especial.
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer
-from sklearn.linear_model import BayesianRidge
+from sklearn.ensemble import RandomForestRegressor
 
 PATH_IN  = "/Users/danielarenee/Desktop/Water_Quality_Logit/base_con_binarias.csv"
 PATH_OUT = "base_modelado.csv"
@@ -102,19 +100,33 @@ for c, n in na_por_col[na_por_col > 0].items():
 
 
 # Aplicación de MICE
-# Usamos BayesianRidge como estimador base de cada regresión encadenada (opción por defecto de sklearn)
+
 imputer = IterativeImputer(
-    estimator     = BayesianRidge(),
-    max_iter      = MAX_ITER,
-    random_state  = RANDOM_STATE,
-    verbose       = 0,
+    estimator=RandomForestRegressor(
+        n_estimators=10,
+        max_depth=8,
+        n_jobs=-1,
+        random_state=RANDOM_STATE,
+    ),
+    max_iter=5,
+    random_state=RANDOM_STATE,
+    verbose=0,
 )
 
 X_original = df[candidatas].copy()
 X_imputado = imputer.fit_transform(X_original)
 X_imputado = pd.DataFrame(X_imputado, columns=candidatas, index=df.index)
 
-# Redondear binarias imputadas a {0, 1}
+# hacemos clipping a 0 para todas las variables continuas no negativas por naturaleza
+continuas_no_negativas = [c for c in candidatas if c not in BINARIAS]
+n_clippeados = 0
+for c in continuas_no_negativas:
+    mask_neg = X_imputado[c] < 0
+    n_clippeados += mask_neg.sum()
+    X_imputado.loc[mask_neg, c] = 0.0
+print(f"  Valores negativos recortados a 0: {n_clippeados}")
+
+# Redondear binarias imputadas a {0, 1} porque MICE las trata como continuas
 for b in BINARIAS:
     if b in X_imputado.columns:
         X_imputado[b] = (X_imputado[b] >= 0.5).astype(int)
@@ -123,13 +135,18 @@ for b in BINARIAS:
 for c in candidatas:
     df[c] = X_imputado[c]
 
+# Verificación
+na_post = df[candidatas].isna().sum().sum()
+neg_post = (df[continuas_no_negativas] < 0).sum().sum()
+
+print(f"  Iteraciones completadas:        {imputer.n_iter_}")
+
 # Exportar
 cols_finales = METADATOS + ["TIPO CUERPO DE AGUA"] + candidatas + ["y"]
 cols_finales = [c for c in cols_finales if c in df.columns]
 df_final = df[cols_finales].copy()
 
 df_final.to_csv(PATH_OUT, index=False, encoding="utf-8-sig")
-print("Base final...")
 print(f"  Dimensiones: {df_final.shape}")
 print(f"  Regresoras candidatas: {len(candidatas)}")
 print(f"  Prevalencia de y = 1: {df_final['y'].mean():.2%}")
