@@ -1012,3 +1012,215 @@ cat("  Mayor exactitud balanceada:",
     resumen_test$Modelo[which.max(resumen_test$Exact_Balanceada)], "\n")
 cat("  Mayor kappa:               ",
     resumen_test$Modelo[which.max(resumen_test$Kappa)], "\n")
+
+# ==============================================================================
+# 11: VERIFICACIÓN DE SUPUESTOS DE LOS MODELOS FINALES
+# ==============================================================================
+# La regresión logística tiene MENOS supuestos que la regresión lineal
+# clásica porque no asume normalidad de errores ni homocedasticidad.
+# Los supuestos a verificar son:
+#
+#   (A) LINEALIDAD DEL LOGIT: la relación entre cada variable predictora
+#       CONTINUA y el log-odds de y debe ser lineal. Se verifica con la
+#       prueba de Box-Tidwell, que añade el término x*ln(x) al modelo y
+#       prueba si su coeficiente es significativo. Si lo es, hay no
+#       linealidad. Se complementa con gráficas de logit empírico.
+#
+#   (B) AUSENCIA DE MULTICOLINEALIDAD: las regresoras no deben estar
+#       fuertemente correlacionadas entre sí. Se verifica con VIF.
+#
+#   (C) INDEPENDENCIA: las observaciones deben ser independientes entre
+#       sí. Se verifica con un análisis exploratorio de mediciones
+#       repetidas por sitio.
+#
+# Las binarias NO se evalúan en linealidad del logit (no aplica con 2
+# niveles).
+# ==============================================================================
+
+cat("\n==============================================================\n")
+cat("11: VERIFICACIÓN DE SUPUESTOS\n")
+cat("==============================================================\n")
+
+library(car)  # boxTidwell, vif
+
+# ------------------------------------------------------------------------------
+# 11A: LINEALIDAD DEL LOGIT (Box-Tidwell)
+# ------------------------------------------------------------------------------
+# Box-Tidwell prueba: H0: la variable cumple linealidad del logit
+# Estadístico: significancia del término x*ln(x) en el modelo extendido.
+#   - p < 0.05 -> rechazar H0 -> hay no linealidad
+#   - p >= 0.05 -> no rechazar H0 -> linealidad se cumple
+#
+# Implementación manual: para cada variable continua x_j de un modelo,
+# ajustamos el modelo extendido: y ~ ... + x_j + x_j:log(x_j).
+# Si el coeficiente de x_j:log(x_j) es significativo (Wald), hay no
+# linealidad en x_j.
+#
+# Detalle técnico: log(0) no existe. Para variables con ceros sumamos un
+# epsilon pequeño antes de tomar log. Esto introduce un sesgo mínimo.
+
+cat("\n--------------------------------------------------------------\n")
+cat("11A: LINEALIDAD DEL LOGIT (Box-Tidwell)\n")
+cat("--------------------------------------------------------------\n")
+cat("  H0: linealidad del logit  vs  H1: no linealidad\n")
+cat("  Decision: si p_valor del termino x*log(x) < 0.05 -> rechazar H0\n\n")
+
+box_tidwell_modelo <- function(modelo, datos, nombre) {
+  
+  cat(sprintf("\n--- %s ---\n", nombre))
+  
+  # variables del modelo
+  vars_modelo <- attr(terms(modelo), "term.labels")
+  vars_modelo <- gsub("`", "", vars_modelo)
+  
+  # filtrar solo las continuas (las binarias 0/1 no aplican)
+  vars_continuas <- vars_modelo[
+    sapply(vars_modelo, function(v) !all(datos[[v]] %in% c(0, 1)))
+  ]
+  
+  resultados <- data.frame(
+    Variable = character(), p_valor = numeric(),
+    Decision = character(), stringsAsFactors = FALSE
+  )
+  
+  formula_orig <- formula(modelo)
+  
+  for (v in vars_continuas) {
+    # epsilon para variables con ceros
+    valores <- datos[[v]]
+    epsilon <- if (min(valores) <= 0) 1e-6 else 0
+    
+    # crear término de interacción x*log(x) en una columna nueva
+    nombre_int <- paste0(v, "_xlogx")
+    datos_aux  <- datos
+    datos_aux[[nombre_int]] <- valores * log(valores + epsilon)
+    
+    # modelo extendido: y ~ todas las del modelo + x*log(x)
+    formula_ext <- update(formula_orig,
+                          as.formula(paste(". ~ . +", paste0("`", nombre_int, "`"))))
+    
+    modelo_ext <- tryCatch(
+      glm(formula_ext, data = datos_aux,
+          family = binomial(link = "logit")),
+      error = function(e) NULL,
+      warning = function(w) {
+        glm(formula_ext, data = datos_aux,
+            family = binomial(link = "logit"))
+      }
+    )
+    
+    if (is.null(modelo_ext)) {
+      next
+    }
+    
+    # extraer p-valor del termino x*log(x)
+    coefs_ext <- summary(modelo_ext)$coefficients
+    fila_int  <- coefs_ext[grepl(nombre_int, rownames(coefs_ext), fixed = TRUE), ,
+                           drop = FALSE]
+    
+    if (nrow(fila_int) == 0) next
+    
+    pv <- fila_int[1, "Pr(>|z|)"]
+    decision <- if (pv < 0.05) "Rechazar H0 (no linealidad)" else "No rechazar H0 (lineal OK)"
+    
+    resultados <- rbind(resultados, data.frame(
+      Variable = v,
+      p_valor  = pv,
+      Decision = decision,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  resultados$p_valor <- format.pval(resultados$p_valor, digits = 4, eps = 1e-4)
+  print(resultados, row.names = FALSE)
+  
+  invisible(resultados)
+}
+
+bt_m1  <- box_tidwell_modelo(modelo_1,        train, "Modelo 1: Teórico")
+bt_m2s <- box_tidwell_modelo(modelo_2_sinCOT, train, "Modelo 2 sin COT (AIC)")
+bt_m3s <- box_tidwell_modelo(modelo_3_sinCOT, train, "Modelo 3 sin COT (BIC)")
+
+# ------------------------------------------------------------------------------
+# 11B: MULTICOLINEALIDAD (VIF) DENTRO DE CADA MODELO FINAL
+# ------------------------------------------------------------------------------
+# El VIF del pool inicial (sección 5) ya filtró redundancias globales.
+# Aquí calculamos el VIF DENTRO de cada modelo final como diagnóstico
+# adicional: con menos variables el VIF puede bajar todavia más.
+# Criterio: VIF <= 10 (estándar de la rúbrica).
+
+cat("\n\n--------------------------------------------------------------\n")
+cat("11B: VIF DENTRO DE CADA MODELO FINAL\n")
+cat("--------------------------------------------------------------\n")
+cat("  Criterio: VIF <= 10 indica ausencia de multicolinealidad crítica\n\n")
+
+vif_modelo <- function(modelo, nombre) {
+  cat(sprintf("\n--- %s ---\n", nombre))
+  vifs <- vif(modelo)
+  vifs_ord <- sort(vifs, decreasing = TRUE)
+  for (v in names(vifs_ord)) {
+    flag <- if (vifs_ord[v] > 10) " ⚠ alto" else ""
+    cat(sprintf("    %-25s VIF = %6.3f%s\n", gsub("`", "", v), vifs_ord[v], flag))
+  }
+  cat(sprintf("    -> max VIF = %.2f  |  min VIF = %.2f\n",
+              max(vifs), min(vifs)))
+}
+
+vif_modelo(modelo_1,        "Modelo 1: Teórico")
+vif_modelo(modelo_2_sinCOT, "Modelo 2 sin COT (AIC)")
+vif_modelo(modelo_3_sinCOT, "Modelo 3 sin COT (BIC)")
+
+# ------------------------------------------------------------------------------
+# 11C: INDEPENDENCIA - análisis de mediciones repetidas por sitio
+# ------------------------------------------------------------------------------
+# La regresión logística asume que las observaciones son independientes
+# entre sí. Si la base contiene mediciones repetidas del mismo sitio
+# (en distintos años), esas observaciones NO son estrictamente
+# independientes: tienden a parecerse por características del sitio.
+#
+# Si la mayoría de sitios tiene UNA medición -> independencia aprox OK.
+# Si hay muchos sitios con varias mediciones -> violación; sería
+# necesario un modelo de efectos mixtos (no cubierto en este curso).
+# Se reporta como limitación del modelo.
+
+cat("\n\n--------------------------------------------------------------\n")
+cat("11C: INDEPENDENCIA (mediciones repetidas por sitio)\n")
+cat("--------------------------------------------------------------\n")
+
+# contar mediciones por sitio en el train
+conteo_sitios <- table(train[["CLAVE SITIO"]])
+
+cat(sprintf("  Total observaciones en train: %d\n", nrow(train)))
+cat(sprintf("  Sitios únicos: %d\n", length(conteo_sitios)))
+cat(sprintf("  Mediciones por sitio:\n"))
+cat(sprintf("    media:   %.2f\n", mean(conteo_sitios)))
+cat(sprintf("    mediana: %.0f\n", median(conteo_sitios)))
+cat(sprintf("    mín:     %d\n", min(conteo_sitios)))
+cat(sprintf("    máx:     %d\n", max(conteo_sitios)))
+
+# distribución
+cat("\n  Distribución del nro de mediciones por sitio:\n")
+dist_med <- table(conteo_sitios)
+for (k in names(dist_med)) {
+  cat(sprintf("    %2s mediciones: %4d sitios (%.1f%% de los sitios)\n",
+              k, dist_med[k], 100 * dist_med[k] / length(conteo_sitios)))
+}
+
+# proporción de observaciones que vienen de sitios con N>1
+sitios_repetidos <- names(conteo_sitios[conteo_sitios > 1])
+n_obs_repetidas  <- sum(train[["CLAVE SITIO"]] %in% sitios_repetidos)
+prop_repetidas   <- n_obs_repetidas / nrow(train)
+
+cat(sprintf("\n  Observaciones de sitios con >1 medición: %d / %d (%.1f%%)\n",
+            n_obs_repetidas, nrow(train), 100 * prop_repetidas))
+
+# Diagnóstico
+cat("\n  Diagnóstico:\n")
+if (prop_repetidas < 0.20) {
+  cat("    -> Independencia se cumple aproximadamente.\n")
+} else if (prop_repetidas < 0.50) {
+  cat("    -> Hay dependencia moderada por sitio. Reportar como limitación.\n")
+} else {
+  cat("    -> Dependencia fuerte. Idealmente modelo de efectos mixtos.\n")
+  cat("    -> Se reporta como limitación del estudio.\n")
+}
