@@ -725,4 +725,11 @@ cat(sprintf("p-valor:     %s\n", format.pval(chi_test$p.value, eps = 1e-4)))
 
 # no se rechaza al 0.001
 
+# Qué onda con SST?...
+summary(train$LOG_SST)
+outliers_log <- train$LOG_SST[train$LOG_SST > mean(train$LOG_SST) + 3*sd(train$LOG_SST)]
+outliers_log
+boxplot(train$LOG_SST, col = "tomato", main = "Detección de Outliers en SST")
+
+# hay 2 outliers que superan las 3 desviaciones estandar
 
