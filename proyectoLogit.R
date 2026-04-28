@@ -639,22 +639,33 @@ for(v in vars_a_transformar) {
   }
 }
 
+# Qué onda con SST?...
+summary(train$LOG_SST)
+outliers_log <- train$LOG_SST[train$LOG_SST > mean(train$LOG_SST) + 3*sd(train$LOG_SST)]
+outliers_log
+boxplot(train$LOG_SST, col = "tomato", main = "Detección de Outliers en SST")
+
+# hay 2 outliers que superan las 3 desviaciones estandar
+# los identificamos y eliminamos
+train_limpio <- train[train$LOG_SST < 9, ]
+cat(sprintf("Observaciones eliminadas: %d\n", nrow(train) - nrow(train_limpio)))
+
 # M1: Teórico
 m1_final <- glm(y ~ TEMP_AGUA + LOG_SST + LOG_COLOR_VER + pH_CAMPO + 
                   LOG_CONDUC_CAMPO + LOG_OD_mgL + NI_TOT + E_COLI, 
-                data = train, family = binomial)
+                data = train_limpio, family = binomial)
 
 # M2: Stepwise AIC 
 m2_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV + 
                   LOG_CONDUC_CAMPO + SAAM + LOG_SST + CD_TOT + LOG_NI_TOT + 
                   TOX_NOM + TIPO_LOTICO, 
-                data = train, family = binomial)
+                data = train_limpio, family = binomial)
 
 # M3: Stepwise BIC
 m3_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV + 
                   LOG_CONDUC_CAMPO + SAAM + LOG_SST + 
                   TOX_NOM + TIPO_LOTICO, 
-                data = train, family = binomial)
+                data = train_limpio, family = binomial)
 
 # COMPARACIÓN DE DESEMPEÑO
 
@@ -724,12 +735,4 @@ cat(sprintf("Estadístico: %.3f\n", chi_test$statistic))
 cat(sprintf("p-valor:     %s\n", format.pval(chi_test$p.value, eps = 1e-4)))
 
 # no se rechaza al 0.001
-
-# Qué onda con SST?...
-summary(train$LOG_SST)
-outliers_log <- train$LOG_SST[train$LOG_SST > mean(train$LOG_SST) + 3*sd(train$LOG_SST)]
-outliers_log
-boxplot(train$LOG_SST, col = "tomato", main = "Detección de Outliers en SST")
-
-# hay 2 outliers que superan las 3 desviaciones estandar
 
