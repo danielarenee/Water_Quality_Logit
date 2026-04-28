@@ -622,104 +622,107 @@ bt_m1  <- box_tidwell_modelo(modelo_1, train, "Modelo 1: Teórico")
 bt_m2s <- box_tidwell_modelo(modelo_2_sinCOT, train, "Modelo 2: AIC")
 bt_m3s <- box_tidwell_modelo(modelo_3_sinCOT, train, "Modelo 3: BIC")
 
+# Notamos que no todos cumplen el supuesto de linealidad...
 
-# 11E: INVESTIGACIÓN DE NO-LINEALIDAD CON SPLINES
+# INVESTIGACIÓN DE NO-LINEALIDAD CON LOG-TRANSFORMACIÓN
+# Reespecificamos el modelo aplicando log(x+1) a las variables que violan el supuesto
+# elegimos esta porque es interpretable y no agrega parámetros al modelo 
 
-# Si M_spline tiene AIC notablemente menor que M_lineal y la prueba LRT
-# entre ambos rechaza H0, los splines mejoran y la violación es relevante.
-# Si AIC es similar y LRT no rechaza con holgura, la forma lineal es una
-# aproximación adecuada y la violación es estadísticamente detectable
-# pero práctica/predictivamente irrelevante.
+cat("11A: INVESTIGACIÓN DE NO-LINEALIDAD CON LOG(X+1)\n")
 
-library(splines)
+vars_a_transformar <- c("SST", "NI_TOT", "P_TOT", "ORTO_PO4", "ABS_UV", "CONDUC_CAMPO", "COLOR_VER", "OD_mgL")
 
-cat("11E: INVESTIGACIÓN DE NO-LINEALIDAD CON SPLINES\n")
-
-# variables que violaron Box-Tidwell en M2 
-vars_no_lineales_m2 <- c("P_TOT", "ORTO_PO4", "CONDUC_CAMPO",
-                         "ABS_UV", "SST")
-
-cat(sprintf("\n  Variables con violación de linealidad en M2: %s\n",
-            paste(vars_no_lineales_m2, collapse = ", ")))
-
-# variables del modelo M2 sin COT
-vars_m2 <- c("N_NH3", "N_NO2", "P_TOT", "ORTO_PO4", "ABS_UV",
-             "CONDUC_CAMPO", "SAAM", "SST", "CD_TOT", "NI_TOT",
-             "TOX_NOM", "TIPO_LOTICO")
-
-# construir formula spline: las no-lineales pasan por bs(.,df=3),
-# las demás se quedan igual
-terminos <- sapply(vars_m2, function(v) {
-  if (v %in% vars_no_lineales_m2) {
-    sprintf("bs(`%s`, df = 3)", v)
-  } else {
-    sprintf("`%s`", v)
+for(v in vars_a_transformar) {
+  if(v %in% names(train)) {
+    train[[paste0("LOG_", v)]] <- log1p(train[[v]])
+    test[[paste0("LOG_", v)]]  <- log1p(test[[v]])
   }
-})
-formula_spline <- as.formula(paste("y ~", paste(terminos, collapse = " + ")))
-
-cat(sprintf("\n  Ajustando modelo M2 con splines en %d variables...\n",
-            length(vars_no_lineales_m2)))
-modelo_2_spline <- glm(formula_spline, data = train,
-                       family = binomial(link = "logit"))
-
-# ----- comparación de bondad de ajuste -----
-cat("\n  --- Comparación M2 lineal vs M2 spline ---\n\n")
-
-comp_spline <- data.frame(
-  Modelo   = c("M2 sin COT (lineal)", "M2 sin COT (spline)"),
-  n_param  = c(length(coef(modelo_2_sinCOT)), length(coef(modelo_2_spline))),
-  AIC      = c(AIC(modelo_2_sinCOT), AIC(modelo_2_spline)),
-  BIC      = c(BIC(modelo_2_sinCOT), BIC(modelo_2_spline)),
-  deviance = c(modelo_2_sinCOT$deviance, modelo_2_spline$deviance)
-)
-comp_spline[, c("AIC","BIC","deviance")] <- round(comp_spline[, c("AIC","BIC","deviance")], 2)
-print(comp_spline, row.names = FALSE)
-
-cat(sprintf("\n  Delta AIC (spline - lineal): %+.2f\n",
-            AIC(modelo_2_spline) - AIC(modelo_2_sinCOT)))
-cat(sprintf("  Delta BIC (spline - lineal): %+.2f\n",
-            BIC(modelo_2_spline) - BIC(modelo_2_sinCOT)))
-
-# ----- LRT formal entre lineal y spline (anidados) -----
-cat("\n  --- Prueba LRT (lineal anidado en spline) ---\n")
-test_spline <- anova(modelo_2_sinCOT, modelo_2_spline, test = "Chisq")
-print(test_spline)
-
-# ----- comparación predictiva en test -----
-cat("\n  --- Comparación predictiva en TEST (n=484) ---\n")
-prob_lineal  <- predict(modelo_2_sinCOT, newdata = test, type = "response")
-prob_spline  <- predict(modelo_2_spline, newdata = test, type = "response")
-
-clasif_lineal  <- as.integer(prob_lineal >= 0.5)
-clasif_spline  <- as.integer(prob_spline >= 0.5)
-
-acc_lineal <- mean(clasif_lineal == test$y)
-acc_spline <- mean(clasif_spline == test$y)
-sens_lineal <- sum(test$y == 1 & clasif_lineal == 1) / sum(test$y == 1)
-sens_spline <- sum(test$y == 1 & clasif_spline == 1) / sum(test$y == 1)
-
-cat(sprintf("    Exactitud   - lineal: %.4f   spline: %.4f   delta: %+.4f\n",
-            acc_lineal, acc_spline, acc_spline - acc_lineal))
-cat(sprintf("    Sensibilidad- lineal: %.4f   spline: %.4f   delta: %+.4f\n",
-            sens_lineal, sens_spline, sens_spline - sens_lineal))
-
-# ----- veredicto -----
-cat("\n  Veredicto:\n")
-mejora_aic <- AIC(modelo_2_sinCOT) - AIC(modelo_2_spline)
-pval_lrt   <- test_spline$`Pr(>Chi)`[2]
-mejora_acc <- acc_spline - acc_lineal
-
-if (mejora_aic > 10 && pval_lrt < 0.001 && mejora_acc > 0.02) {
-  cat("    -> SPLINES MEJORAN sustancialmente. La no-linealidad importa.\n")
-  cat("       Considerar reespecificar el modelo final con splines.\n")
-} else if (mejora_aic > 0 && pval_lrt < 0.05) {
-  cat("    -> Splines mejoran estadísticamente pero la mejora predictiva\n")
-  cat("       es marginal. La forma lineal es una aproximación razonable.\n")
-} else {
-  cat("    -> Splines NO mejoran apreciablemente. La forma lineal es\n")
-  cat("       adecuada para los fines de este estudio. La violación de\n")
-  cat("       Box-Tidwell se reporta como detectable pero sin impacto\n")
-  cat("       práctico en la calidad del modelo.\n")
 }
+
+# M1: Teórico
+m1_final <- glm(y ~ TEMP_AGUA + LOG_SST + LOG_COLOR_VER + pH_CAMPO + 
+                  LOG_CONDUC_CAMPO + LOG_OD_mgL + NI_TOT + E_COLI, 
+                data = train, family = binomial)
+
+# M2: Stepwise AIC 
+m2_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV + 
+                  LOG_CONDUC_CAMPO + SAAM + LOG_SST + CD_TOT + LOG_NI_TOT + 
+                  TOX_NOM + TIPO_LOTICO, 
+                data = train, family = binomial)
+
+# M3: Stepwise BIC
+m3_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV + 
+                  LOG_CONDUC_CAMPO + SAAM + LOG_SST + 
+                  TOX_NOM + TIPO_LOTICO, 
+                data = train, family = binomial)
+
+# COMPARACIÓN DE DESEMPEÑO
+
+comparar_modelos_fijo <- function(m_lin, m_log, nombre) {
+  cat(sprintf("\n--- %s: Lineal vs Log ---\n", nombre))
+  df <- data.frame(
+    Metrica = c("AIC", "BIC", "Deviance"),
+    Lineal  = c(AIC(m_lin), BIC(m_lin), m_lin$deviance),
+    Log     = c(AIC(m_log), BIC(m_log), m_log$deviance)
+  )
+  df$Lineal <- round(df$Lineal, 2)
+  df$Log    <- round(df$Log, 2)
+  
+  print(df, row.names = FALSE)
+  cat(sprintf("Delta AIC: %.2f\n", AIC(m_log) - AIC(m_lin)))
+}
+
+comparar_modelos_fijo(modelo_1, m1_final, "MODELO 1")
+comparar_modelos_fijo(modelo_2_sinCOT, m2_final, "MODELO 2")
+comparar_modelos_fijo(modelo_3_sinCOT, m3_final, "MODELO 3")
+
+# VERIFICACIÓN DE LINEALIDAD (Box-Tidwell Post-Log)
+bt_m1_log <- box_tidwell_modelo(m1_final, train, "Modelo 1 (Log)")
+bt_m2_log <- box_tidwell_modelo(m2_final, train, "Modelo 2 (Log)")
+bt_m3_log <- box_tidwell_modelo(m3_final, train, "Modelo 3 (Log)")
+
+# EVALUAR PREDICCIÓN
+
+evaluar_prediccion <- function(modelo, nombre_modelo) {
+  prob <- predict(modelo, newdata = test, type = "response")
+  pred <- as.integer(prob >= 0.5)
+  
+  # metricas
+  acc  <- mean(pred == test$y)
+  sens <- sum(test$y == 1 & pred == 1) / sum(test$y == 1) # Recall
+  spec <- sum(test$y == 0 & pred == 0) / sum(test$y == 0) # Especificidad
+  
+  cat(sprintf("\n--- Métricas en Test: %s ---\n", nombre_modelo))
+  cat(sprintf("  Accuracy:      %.4f\n", acc))
+  cat(sprintf("  Sensibilidad:  %.4f (Recall)\n", sens))
+  cat(sprintf("  Especificidad: %.4f\n", spec))
+}
+
+evaluar_prediccion(m1_final, "Modelo 1 (Log)")
+evaluar_prediccion(m2_final, "Modelo 2 (Log)")
+evaluar_prediccion(m3_final, "Modelo 3 (Log)")
+
+#checar vif
+vif(m1_final)
+vif(m2_final)
+vif(m3_final)
+
+# EXTRA: INDEPENDENCIA ENTRE LA VARIABLE RESPUESTA Y EL TIPO DE CUERPO DE AGUA
+# Verificamos si la clasificación de calidad (DQO, base de y) depende del
+# tipo de cuerpo de agua. Aplicamos sobre el dataset completo train+test
+
+cat("EXTRA: INDEPENDENCIA ENTRE y Y TIPO_LOTICO (base completa)\n")
+cat("  H0: y (semáforo DQO) y TIPO_LOTICO son independientes\n")
+
+base_completa <- rbind(train, test)
+tabla <- table(base_completa$TIPO_LOTICO, base_completa$y)
+chi_test <- chisq.test(tabla, correct = FALSE)
+
+print(round(chi_test$expected, 2)) # vemos que son >=5, chi cuadrada es valida
+
+cat(sprintf("Estadístico: %.3f\n", chi_test$statistic))
+cat(sprintf("p-valor:     %s\n", format.pval(chi_test$p.value, eps = 1e-4)))
+
+# no se rechaza al 0.001
+
 
