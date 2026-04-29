@@ -4,9 +4,9 @@
 # ECONOMETRÍA 1
 # ==============================================================================
 #Ruta Dani Abajo
-setwd("/Users/danielarenee/Desktop/Water_Quality_Logit")
+#setwd("/Users/danielarenee/Desktop/Water_Quality_Logit")
 #Ruta Mario Abajo
-#setwd("C:/Users/msfcl/OneDrive/Escritorio/Water_Quality_Logit")
+setwd("C:/Users/msfcl/OneDrive/Escritorio/Water_Quality_Logit")
 
 library(car)      
 library(corrplot)
@@ -736,3 +736,123 @@ cat(sprintf("p-valor:     %s\n", format.pval(chi_test$p.value, eps = 1e-4)))
 
 # no se rechaza al 0.001
 
+# ==============================================================================
+# CÓDIGO OPTIMIZADO: WALD, PSEUDO R^2 Y DESVIACIÓN
+# ==============================================================================
+
+library(pscl)
+
+# Agrupamos los modelos en una lista para iterar sin repetir código
+modelos <- list(M1_Teorico = m1_final, M2_AIC = m2_final, M3_BIC = m3_final)
+
+# ------------------------------------------------------------------------------
+# TAREA A: INFERENCIA DE WALD
+# summary() de R base ya calcula la matriz Hessiana y hace la prueba de Wald.
+# Extraemos la tabla de coeficientes directamente.
+# ------------------------------------------------------------------------------
+cat("\n--- INFERENCIA DE WALD ---\n")
+lapply(modelos, function(m) round(summary(m)$coefficients, 4))
+
+
+# ------------------------------------------------------------------------------
+# TAREA B: PSEUDO R^2
+# pR2() calcula McFadden, r2ML (Cox & Snell) y r2CU (Nagelkerke) en 1 línea.
+# ------------------------------------------------------------------------------
+cat("\n--- PSEUDO R^2 ---\n")
+# Usamos sapply y t() para que el output sea una tabla comparativa limpia
+tabla_r2 <- t(sapply(modelos, pR2))
+print(round(tabla_r2[, c("llh", "McFadden", "r2ML", "r2CU")], 4))
+
+
+# ------------------------------------------------------------------------------
+# TAREA C: PRUEBAS DE DESVIACIÓN
+# ------------------------------------------------------------------------------
+
+cat("\n--- PRUEBA 1: DESVIACIÓN VS SATURADO TEÓRICO ---\n")
+# pchisq() evalúa la deviance residual (lambda) usando los grados de libertad.
+# p > 0.05 indica que NO se rechaza H0 (el modelo es adecuado)
+prueba1 <- sapply(modelos, function(m) {
+  p_val <- 1 - pchisq(m$deviance, m$df.residual)
+  c(Deviance = m$deviance, p_valor = p_val, 
+    Adecuado = ifelse(p_val > 0.05, "SI", "NO"))
+})
+print(t(prueba1))
+
+
+cat("\n--- PRUEBA 2: SUBCONJUNTOS DE PARÁMETROS VS COMPLETO TRANSFORMADO ---\n")
+# 1. Definimos el modelo completo estrictamente anidado
+vars_completas_log <- c("COLI_FEC", "COLI_TOT", "E_COLI", "N_NH3", "N_NO2", "N_TOTK", 
+                        "TOX_D_48_UT", "LOG_P_TOT", "LOG_ORTO_PO4", "LOG_COLOR_VER", "LOG_ABS_UV", 
+                        "LOG_CONDUC_CAMPO", "pH_CAMPO", "LOG_OD_mgL", "SAAM", "LOG_SST", "CD_TOT", 
+                        "CR_TOT", "HG_TOT", "LOG_NI_TOT", "CN_TOT", "DUR_TOT", "TEMP_AMB", 
+                        "TEMP_AGUA", "CAUDAL", "TOX_NOM", "TIPO_LOTICO")
+
+form_completa_log <- as.formula(paste("y ~", paste(vars_completas_log, collapse = " + ")))
+modelo_completo_log <- glm(form_completa_log, data = train_limpio, family = binomial)
+
+# 2. Comparamos devianzas con anova()
+# p < 0.05 indica que SE RECHAZA H0 (las variables omitidas sí aportaban)
+lapply(modelos, function(m) anova(m, modelo_completo_log, test = "Chisq"))
+
+# ==============================================================================
+# EVALUACIÓN EXHAUSTIVA DE LA MATRIZ DE CONFUSIÓN (TEST)
+# Cálculo de las 10 métricas de clase + Índice Kappa de Cohen
+# ==============================================================================
+
+cat("\n--- MÉTRICAS COMPLETAS DE LA MATRIZ DE CONFUSIÓN ---\n")
+
+umbral <- 0.5
+modelos <- list(M1_Teorico = m1_final, M2_AIC = m2_final, M3_BIC = m3_final)
+
+resultados_cm <- lapply(names(modelos), function(nombre) {
+  m <- modelos[[nombre]]
+  
+  # Predicciones
+  prob_pred <- predict(m, newdata = test, type = "response")
+  y_pred <- ifelse(prob_pred >= umbral, 1, 0)
+  y_obs <- test$y
+  
+  # 1. Elementos de la matriz
+  a <- sum(y_obs == 1 & y_pred == 1) # Verdaderos Positivos (VP)
+  b <- sum(y_obs == 0 & y_pred == 1) # Falsos Positivos (FP)
+  c <- sum(y_obs == 1 & y_pred == 0) # Falsos Negativos (FN)
+  d <- sum(y_obs == 0 & y_pred == 0) # Verdaderos Negativos (VN)
+  n <- a + b + c + d
+  
+  # 2. Las 10 métricas de las notas
+  exactitud         <- (a + d) / n
+  sensitividad      <- a / (a + c)
+  especificidad     <- d / (b + d)
+  tasa_fp           <- b / (b + d)
+  vpp_precision     <- a / (a + b)
+  vpn               <- d / (c + d)
+  prevalencia       <- (a + c) / n
+  exact_balanceada  <- (sensitividad + especificidad) / 2
+  tasa_deteccion    <- a / n
+  prevalencia_detec <- (a + b) / n
+  
+  # 3. Índice Kappa de Cohen
+  pe <- ((a + c) * (a + b) + (b + d) * (c + d)) / (n^2)
+  kappa <- (exactitud - pe) / (1 - pe)
+  
+  # Estructurar resultados
+  data.frame(
+    Modelo           = nombre,
+    Exactitud        = round(exactitud, 4),
+    Sensitividad     = round(sensitividad, 4),
+    Especificidad    = round(especificidad, 4),
+    Tasa_FP          = round(tasa_fp, 4),
+    Precisión_VPP    = round(vpp_precision, 4),
+    VPN              = round(vpn, 4),
+    Prevalencia      = round(prevalencia, 4),
+    Exact_Balanceada = round(exact_balanceada, 4),
+    Tasa_Deteccion   = round(tasa_deteccion, 4),
+    Prev_Deteccion   = round(prevalencia_detec, 4),
+    Kappa            = round(kappa, 4),
+    stringsAsFactors = FALSE
+  )
+})
+
+# Unir y transponer para facilitar la lectura de todas las métricas
+tabla_completa <- do.call(rbind, resultados_cm)
+print(t(tabla_completa))
