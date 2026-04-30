@@ -856,3 +856,69 @@ resultados_cm <- lapply(names(modelos), function(nombre) {
 # Unir y transponer para facilitar la lectura de todas las métricas
 tabla_completa <- do.call(rbind, resultados_cm)
 print(t(tabla_completa))
+
+# ==============================================================================
+# TABLAS DE ODDS RATIOS (COCIENTE DE POSIBILIDADES)
+# Basado en la relación oddsratio = exp(Beta_hat)
+# ==============================================================================
+
+# 1. Función reutilizable para extraer coeficientes, quitar intercepto y calcular OR
+generar_tabla_or <- function(modelo, nombre_modelo) {
+  
+  # Extraer coeficientes del modelo
+  coefs <- coef(modelo)
+  
+  # Excluir el intercepto
+  coefs <- coefs[names(coefs) != "(Intercept)"]
+  
+  # Calcular Odds Ratios: exp(Beta_hat)
+  or_vals <- exp(coefs)
+  
+  # Construir el data.frame con 4 decimales
+  tabla <- data.frame(
+    Variable = names(coefs),
+    Beta_hat = round(coefs, 4),
+    OR       = round(or_vals, 4),
+    stringsAsFactors = FALSE
+  )
+  
+  # Limpiar backticks de los nombres de variables
+  tabla$Variable <- gsub("`", "", tabla$Variable)
+  
+  # Imprimir con encabezado claro
+  cat(sprintf("\n--- ODDS RATIOS: %s ---\n", nombre_modelo))
+  print(tabla, row.names = FALSE)
+  
+  return(tabla)
+}
+
+# 2. Aplicar la función a los 3 modelos finales
+tabla_m1 <- generar_tabla_or(m1_final, "Modelo 1 (Teórico)")
+tabla_m2 <- generar_tabla_or(m2_final, "Modelo 2 (Stepwise AIC)")
+tabla_m3 <- generar_tabla_or(m3_final, "Modelo 3 (Stepwise BIC)")
+
+
+# ==============================================================================
+# TABLA RESUMEN COMPARATIVA (Variables en más de un modelo)
+# ==============================================================================
+
+# Extraer todas las variables únicas presentes en los 3 modelos
+todas_vars <- unique(c(tabla_m1$Variable, tabla_m2$Variable, tabla_m3$Variable))
+
+# Crear estructura base para la comparación
+comparativa <- data.frame(Variable = todas_vars, stringsAsFactors = FALSE)
+
+# Emparejar los OR de cada modelo a la variable correspondiente usando match()
+comparativa$OR_M1 <- tabla_m1$OR[match(comparativa$Variable, tabla_m1$Variable)]
+comparativa$OR_M2 <- tabla_m2$OR[match(comparativa$Variable, tabla_m2$Variable)]
+comparativa$OR_M3 <- tabla_m3$OR[match(comparativa$Variable, tabla_m3$Variable)]
+
+# Contar en cuántos modelos aparece cada variable para filtrar
+comparativa$Conteo <- rowSums(!is.na(comparativa[, c("OR_M1", "OR_M2", "OR_M3")]))
+
+# Filtrar solo las que aparecen en más de un modelo y excluir la columna auxiliar
+comparativa_final <- comparativa[comparativa$Conteo > 1, c("Variable", "OR_M1", "OR_M2", "OR_M3")]
+
+# Imprimir tabla comparativa
+cat("\n--- RESUMEN COMPARATIVO: OR EN MÚLTIPLES MODELOS ---\n")
+print(comparativa_final, row.names = FALSE)
