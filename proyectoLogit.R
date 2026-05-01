@@ -4,9 +4,9 @@
 # ECONOMETRÍA 1
 # ==============================================================================
 #Ruta Dani Abajo
-#setwd("/Users/danielarenee/Desktop/Water_Quality_Logit")
+setwd("/Users/danielarenee/Desktop/Water_Quality_Logit")
 #Ruta Mario Abajo
-setwd("C:/Users/msfcl/OneDrive/Escritorio/Water_Quality_Logit")
+#setwd("C:/Users/msfcl/OneDrive/Escritorio/Water_Quality_Logit")
 
 library(car)      
 library(corrplot)
@@ -94,7 +94,7 @@ corrplot(corr,
          addCoef.col = "black",
          number.cex  = 0.45,
          col       = colorRampPalette(c("#016FB9", "white", "#B6244F"))(200),
-         title     = "Matriz de correlaciones de Spearman (train, R)",
+         title     = "Matriz de correlaciones de Spearman",
          mar       = c(0, 0, 2, 0))
 dev.off()
 cat(sprintf("  ✔ Heatmap guardado en: %s\n", PATH_HEATMAP))
@@ -201,7 +201,7 @@ corrplot(corr_final,
          addCoef.col = "black",
          number.cex  = 0.45,
          col       = colorRampPalette(c("#016FB9", "white", "#B6244F"))(200),
-         title     = "Matriz de correlaciones de Spearman Post-VIF (train, R)",
+         title     = "Matriz de correlaciones de Spearman Post-VIF",
          mar       = c(0, 0, 2, 0))
 dev.off()
 
@@ -286,7 +286,6 @@ print(car::vif(modelo_3))
 # Chi cuadrado para independencia (COT_NOM vs TIPO_LOTICO)
 print(chisq.test(table(train[["COT_NOM"]], train[["TIPO_LOTICO"]])))
 # independencia
-
 
 # 7. INFERENCIA DE WALD - PRUEBA DE SIGNIFICANCIA INDIVIDUAL
 
@@ -482,6 +481,13 @@ p2_m1  <- prueba2(modelo_1,        modelo_base_sinCOT, "Modelo 1: Teórico")
 p2_m2s <- prueba2(modelo_2_sinCOT, modelo_base_sinCOT, "Modelo 2 sin COT (AIC)")
 p2_m3s <- prueba2(modelo_3_sinCOT, modelo_base_sinCOT, "Modelo 3 sin COT (BIC)")
 
+
+# WALD DESPUES DE QUITAR COT NOM
+tabla_m1 <- tabla_wald(modelo_1, "Modelo 1: Teórico")
+tabla_m2 <- tabla_wald(modelo_2_sinCOT, "Modelo 2: Stepwise AIC")
+tabla_m3 <- tabla_wald(modelo_3_sinCOT, "Modelo 3: Stepwise BIC")
+
+
 # 9: PSEUDO-R^2 
 
 # McFadden: R2_McF = 1 - ln(L_modelo) / ln(L_nulo)
@@ -663,8 +669,7 @@ m2_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV +
 
 # M3: Stepwise BIC
 m3_final <- glm(y ~ N_NH3 + N_NO2 + LOG_P_TOT + LOG_ORTO_PO4 + LOG_ABS_UV + 
-                  LOG_CONDUC_CAMPO + SAAM + LOG_SST + 
-                  TOX_NOM + TIPO_LOTICO, 
+                  LOG_CONDUC_CAMPO + SAAM + LOG_SST + TIPO_LOTICO, 
                 data = train_limpio, family = binomial)
 
 # COMPARACIÓN DE DESEMPEÑO
@@ -686,6 +691,8 @@ comparar_modelos_fijo <- function(m_lin, m_log, nombre) {
 comparar_modelos_fijo(modelo_1, m1_final, "MODELO 1")
 comparar_modelos_fijo(modelo_2_sinCOT, m2_final, "MODELO 2")
 comparar_modelos_fijo(modelo_3_sinCOT, m3_final, "MODELO 3")
+
+
 
 # VERIFICACIÓN DE LINEALIDAD (Box-Tidwell Post-Log)
 bt_m1_log <- box_tidwell_modelo(m1_final, train, "Modelo 1 (Log)")
@@ -736,37 +743,21 @@ cat(sprintf("p-valor:     %s\n", format.pval(chi_test$p.value, eps = 1e-4)))
 
 # no se rechaza al 0.001
 
-# ==============================================================================
-# CÓDIGO OPTIMIZADO: WALD, PSEUDO R^2 Y DESVIACIÓN
-# ==============================================================================
+# WALD, PSEUDO R^2 Y DESVIACIÓN
 
 library(pscl)
 
 # Agrupamos los modelos en una lista para iterar sin repetir código
 modelos <- list(M1_Teorico = m1_final, M2_AIC = m2_final, M3_BIC = m3_final)
 
-# ------------------------------------------------------------------------------
-# TAREA A: INFERENCIA DE WALD
-# summary() de R base ya calcula la matriz Hessiana y hace la prueba de Wald.
-# Extraemos la tabla de coeficientes directamente.
-# ------------------------------------------------------------------------------
-cat("\n--- INFERENCIA DE WALD ---\n")
+# INFERENCIA DE WALD
 lapply(modelos, function(m) round(summary(m)$coefficients, 4))
 
-
-# ------------------------------------------------------------------------------
-# TAREA B: PSEUDO R^2
-# pR2() calcula McFadden, r2ML (Cox & Snell) y r2CU (Nagelkerke) en 1 línea.
-# ------------------------------------------------------------------------------
-cat("\n--- PSEUDO R^2 ---\n")
-# Usamos sapply y t() para que el output sea una tabla comparativa limpia
+# PSEUDO R^2
 tabla_r2 <- t(sapply(modelos, pR2))
 print(round(tabla_r2[, c("llh", "McFadden", "r2ML", "r2CU")], 4))
 
-
-# ------------------------------------------------------------------------------
-# TAREA C: PRUEBAS DE DESVIACIÓN
-# ------------------------------------------------------------------------------
+# PRUEBAS DE DESVIACIÓN
 
 cat("\n--- PRUEBA 1: DESVIACIÓN VS SATURADO TEÓRICO ---\n")
 # pchisq() evalúa la deviance residual (lambda) usando los grados de libertad.
@@ -777,7 +768,6 @@ prueba1 <- sapply(modelos, function(m) {
     Adecuado = ifelse(p_val > 0.05, "SI", "NO"))
 })
 print(t(prueba1))
-
 
 cat("\n--- PRUEBA 2: SUBCONJUNTOS DE PARÁMETROS VS COMPLETO TRANSFORMADO ---\n")
 # 1. Definimos el modelo completo estrictamente anidado
@@ -790,16 +780,12 @@ vars_completas_log <- c("COLI_FEC", "COLI_TOT", "E_COLI", "N_NH3", "N_NO2", "N_T
 form_completa_log <- as.formula(paste("y ~", paste(vars_completas_log, collapse = " + ")))
 modelo_completo_log <- glm(form_completa_log, data = train_limpio, family = binomial)
 
+
 # 2. Comparamos devianzas con anova()
 # p < 0.05 indica que SE RECHAZA H0 (las variables omitidas sí aportaban)
 lapply(modelos, function(m) anova(m, modelo_completo_log, test = "Chisq"))
 
-# ==============================================================================
-# EVALUACIÓN EXHAUSTIVA DE LA MATRIZ DE CONFUSIÓN (TEST)
-# Cálculo de las 10 métricas de clase + Índice Kappa de Cohen
-# ==============================================================================
-
-cat("\n--- MÉTRICAS COMPLETAS DE LA MATRIZ DE CONFUSIÓN ---\n")
+# EVALUACIÓN DE LA MATRIZ DE CONFUSIÓN (TEST)
 
 umbral <- 0.5
 modelos <- list(M1_Teorico = m1_final, M2_AIC = m2_final, M3_BIC = m3_final)
@@ -812,14 +798,14 @@ resultados_cm <- lapply(names(modelos), function(nombre) {
   y_pred <- ifelse(prob_pred >= umbral, 1, 0)
   y_obs <- test$y
   
-  # 1. Elementos de la matriz
+  # Elementos de la matriz
   a <- sum(y_obs == 1 & y_pred == 1) # Verdaderos Positivos (VP)
   b <- sum(y_obs == 0 & y_pred == 1) # Falsos Positivos (FP)
   c <- sum(y_obs == 1 & y_pred == 0) # Falsos Negativos (FN)
   d <- sum(y_obs == 0 & y_pred == 0) # Verdaderos Negativos (VN)
   n <- a + b + c + d
   
-  # 2. Las 10 métricas de las notas
+  # métricas de las notas
   exactitud         <- (a + d) / n
   sensitividad      <- a / (a + c)
   especificidad     <- d / (b + d)
@@ -831,7 +817,7 @@ resultados_cm <- lapply(names(modelos), function(nombre) {
   tasa_deteccion    <- a / n
   prevalencia_detec <- (a + b) / n
   
-  # 3. Índice Kappa de Cohen
+  # Índice Kappa de Cohen
   pe <- ((a + c) * (a + b) + (b + d) * (c + d)) / (n^2)
   kappa <- (exactitud - pe) / (1 - pe)
   
@@ -853,72 +839,103 @@ resultados_cm <- lapply(names(modelos), function(nombre) {
   )
 })
 
-# Unir y transponer para facilitar la lectura de todas las métricas
 tabla_completa <- do.call(rbind, resultados_cm)
 print(t(tabla_completa))
 
-# ==============================================================================
-# TABLAS DE ODDS RATIOS (COCIENTE DE POSIBILIDADES)
-# Basado en la relación oddsratio = exp(Beta_hat)
-# ==============================================================================
 
-# 1. Función reutilizable para extraer coeficientes, quitar intercepto y calcular OR
+# ODDS RATIOS (COCIENTE DE POSIBILIDADES)
+
 generar_tabla_or <- function(modelo, nombre_modelo) {
-  
-  # Extraer coeficientes del modelo
   coefs <- coef(modelo)
-  
-  # Excluir el intercepto
-  coefs <- coefs[names(coefs) != "(Intercept)"]
-  
-  # Calcular Odds Ratios: exp(Beta_hat)
-  or_vals <- exp(coefs)
-  
-  # Construir el data.frame con 4 decimales
+  coefs <- coefs[names(coefs) != "(Intercept)"] # Excluir el intercepto
+  or_vals <- exp(coefs) # Calcular Odds Ratios: exp(Beta_hat)
   tabla <- data.frame(
     Variable = names(coefs),
     Beta_hat = round(coefs, 4),
     OR       = round(or_vals, 4),
     stringsAsFactors = FALSE
   )
-  
-  # Limpiar backticks de los nombres de variables
+
   tabla$Variable <- gsub("`", "", tabla$Variable)
   
-  # Imprimir con encabezado claro
   cat(sprintf("\n--- ODDS RATIOS: %s ---\n", nombre_modelo))
   print(tabla, row.names = FALSE)
   
   return(tabla)
 }
 
-# 2. Aplicar la función a los 3 modelos finales
 tabla_m1 <- generar_tabla_or(m1_final, "Modelo 1 (Teórico)")
 tabla_m2 <- generar_tabla_or(m2_final, "Modelo 2 (Stepwise AIC)")
 tabla_m3 <- generar_tabla_or(m3_final, "Modelo 3 (Stepwise BIC)")
 
-
-# ==============================================================================
 # TABLA RESUMEN COMPARATIVA (Variables en más de un modelo)
-# ==============================================================================
 
 # Extraer todas las variables únicas presentes en los 3 modelos
 todas_vars <- unique(c(tabla_m1$Variable, tabla_m2$Variable, tabla_m3$Variable))
-
-# Crear estructura base para la comparación
 comparativa <- data.frame(Variable = todas_vars, stringsAsFactors = FALSE)
 
-# Emparejar los OR de cada modelo a la variable correspondiente usando match()
+# emparejar Odds ratios
 comparativa$OR_M1 <- tabla_m1$OR[match(comparativa$Variable, tabla_m1$Variable)]
 comparativa$OR_M2 <- tabla_m2$OR[match(comparativa$Variable, tabla_m2$Variable)]
 comparativa$OR_M3 <- tabla_m3$OR[match(comparativa$Variable, tabla_m3$Variable)]
 
-# Contar en cuántos modelos aparece cada variable para filtrar
 comparativa$Conteo <- rowSums(!is.na(comparativa[, c("OR_M1", "OR_M2", "OR_M3")]))
-
-# Filtrar solo las que aparecen en más de un modelo y excluir la columna auxiliar
 comparativa_final <- comparativa[comparativa$Conteo > 1, c("Variable", "OR_M1", "OR_M2", "OR_M3")]
 
 # Imprimir tabla comparativa
 cat("\n--- RESUMEN COMPARATIVO: OR EN MÚLTIPLES MODELOS ---\n")
 print(comparativa_final, row.names = FALSE)
+
+# CÁLCULO DE VARIACIONES OR PARA EL REPORTE (MODELO 2)
+# Fórmula utilizada en el texto: exp(c * beta)
+
+get_beta <- function(modelo, var_name) {
+  coefs <- coef(modelo)
+  as.numeric(coefs[grepl(paste0("^", var_name, "$"), names(coefs)) |
+                     grepl(paste0("`", var_name, "`"), names(coefs))])
+}
+
+# Extraer coeficientes del Modelo 2
+beta_nh3  <- get_beta(m2_final, "N_NH3")
+beta_ptot <- get_beta(m2_final, "LOG_P_TOT")
+beta_orto <- get_beta(m2_final, "LOG_ORTO_PO4")
+
+# Valores de variación
+cs_vals <- c(0.5, 2)
+
+cat(sprintf("1. N_NH3 (beta = %.4f)\n", beta_nh3))
+cat(sprintf("   c = 0.5 : OR = %.3f\n", exp(cs_vals[1] * beta_nh3)))
+cat(sprintf("   c = 2   : OR = %.3f\n\n", exp(cs_vals[2] * beta_nh3)))
+
+cat(sprintf("2. LOG_P_TOT (beta = %.4f)\n", beta_ptot))
+cat(sprintf("   c = 0.5 : OR = %.3f\n", exp(cs_vals[1] * beta_ptot)))
+cat(sprintf("   c = 2   : OR = %.3f\n\n", exp(cs_vals[2] * beta_ptot)))
+
+cat(sprintf("3. LOG_ORTO_PO4 (beta = %.4f)\n", beta_orto))
+cat(sprintf("   c = 0.5 : OR = %.3f\n", exp(cs_vals[1] * beta_orto)))
+cat(sprintf("   c = 2   : OR = %.3f\n", exp(cs_vals[2] * beta_orto)))
+
+# CHECAR CURVA ROC
+
+library(pROC)
+
+# AUC para Modelo 2
+prob_m2 <- predict(m2_final, test, type = "response")
+roc_m2 <- roc(test$y, prob_m2)
+cat("AUC Modelo 2:", auc(roc_m2), "\n")
+
+# AUC para Modelo 3
+prob_m3 <- predict(m3_final, test, type = "response")
+roc_m3 <- roc(test$y, prob_m3)
+cat("AUC Modelo 3:", auc(roc_m3), "\n")
+
+# Guardar curva ROC del ganador (M2)
+png("curva_roc_m2.png", width = 800, height = 800, res = 120)
+plot(roc_m2, main = "Curva ROC (Modelo 2)", 
+     col = "#016FB9", 
+     xlab = "1 - Especificidad",        
+     ylab = "Sensibilidad", 
+     lwd = 3, 
+     print.auc = TRUE, 
+     legacy.axes = TRUE)
+dev.off()
